@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<launch>
+    <param name="use_sim_time" value="true" />
+
+    <node pkg="tf" type="static_transform_publisher" name="broadcaster_foot2base"
+             args="0 0 0 0 0 0 /base_footprint /base_link 100" />
+
+    <node pkg="tf" type="static_transform_publisher" name="broadcaster_base2laser"
+             args="0 0 0.1 0 0 0 /base_link /laser_link 100" />
+
+    <include file="$(find gazebo_ros)/launch/empty_world.launch">
+        <arg name="world_name" value="$(find tr10_description)/world/maze01.world"/>
+    </include>
+
+    <node pkg="gazebo_ros" type="spawn_model" args="-file $(find tr10_description)/urdf/tr10.urdf -urdf -model tr10" name="spawn_model_tr10" />
+
+    <node pkg="hector_mapping" type="hector_mapping" name="hector_gmapping" />
+
+</launch>
+
