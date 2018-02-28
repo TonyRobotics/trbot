@@ -3,6 +3,7 @@
 import sys
 import time
 import math
+import struct
 
 import serial
 import rospy
@@ -23,10 +24,22 @@ class TRDSerialDriver():
             cmd[-2] ^= cmd[i]
         self.conn.write(cmd)
 
-    def set_speed(self, v1, v2):
-        cmd = [0xea, 0x06, 0x31, v1, 0x00, 0x0d]
+    def reset_base(self):
+        print('Resetting Base...')
+        cmd = [0xea, 0x03, 0x50, 0x00, 0x0d]
         self.send_cmd(cmd)
-        cmd = [0xea, 0x06, 0x32, v2, 0x00, 0x0d]
+        time.sleep(3)
+        print('Resetting Base Finished')
+
+    def reset_encoder(self):
+        cmd = [0xea, 0x03, 0x35, 0x00, 0x0d]
+        self.send_cmd(cmd)
+        print('Reset Encoder:', self.get_response(5))
+
+    def set_speed(self, v1, v2):
+        cmd = [0xea, 0x04, 0x31, v1, 0x00, 0x0d]
+        self.send_cmd(cmd)
+        cmd = [0xea, 0x04, 0x32, v2, 0x00, 0x0d]
         self.send_cmd(cmd)
 
     def get_response(self, n):
@@ -36,33 +49,28 @@ class TRDSerialDriver():
         return res
 
     def get_mode(self):
-        cmd = [0xea, 0x05, 0x2b, 0x00, 0x0d]
+        cmd = [0xea, 0x03, 0x2b, 0x00, 0x0d]
         self.send_cmd(cmd)
         res = self.get_response(6)
         return res[3]
 
     def get_encoders(self):
-        cmd = [0xea, 0x05, 0x25, 0x00, 0x0d]
+        cmd = [0xea, 0x03, 0x25, 0x00, 0x0d]
         self.send_cmd(cmd)
         res = self.get_response(13)
-        encoder1 = (res[3]&0xff) << 24
-        encoder1 |= (res[4]&0xff) << 16
-        encoder1 |= (res[5]&0xff) <<  8
-        encoder1 |= (res[6]&0xff)
-        encoder2 = (res[7]&0xff) << 24
-        encoder2 |= (res[8]&0xff) << 16
-        encoder2 |= (res[9]&0xff) <<  8
-        encoder2 |= (res[10]&0xff)
+        encoder1, = struct.unpack('>i', res[3:7])
+        encoder2, = struct.unpack('>i', res[7:11])
         if self.first_time_flag:
             self.encoder1_offset = encoder1
             self.encoder2_offset = encoder2
             self.first_time_flag = False
         encoder1 -= self.encoder1_offset
         encoder2 -= self.encoder2_offset
+        print('{} {}'.format(encoder1, encoder2))
         return (encoder1, encoder2)
 
     def get_version(self):
-        cmd = [0xea, 0x05, 0x51, 0x00, 0x0d]
+        cmd = [0xea, 0x03, 0x51, 0x00, 0x0d]
         self.send_cmd(cmd)
         res = self.get_response(13)
         return res[2:11]
@@ -71,6 +79,7 @@ class DriverNode():
 
     def __init__(self, node_name, serialport_name, baudrate):
         self.serial_driver = TRDSerialDriver(serialport_name, baudrate)
+        self.serial_driver.reset_encoder()
         rospy.init_node(node_name)
         self.linear_coef = 82
         self.angular_coef = 14.64
@@ -104,7 +113,6 @@ class DriverNode():
         v2 = int(v2) if v2<255 else 255
         v1 = int(v1) if v1>0 else 0
         v2 = int(v2) if v2>0 else 0
-        print('set speed {} {}'.format(v1, v2))
         self.serial_driver.set_speed(v1, v2)
 
     def update_odom(self):
@@ -156,7 +164,7 @@ class DriverNode():
                 break
 
 if __name__=='__main__':
-    serialport_name = '/dev/ttyUSB0'
+    serialport_name = '/dev/motor_trd'
     baudrate = 38400
     driver_node = DriverNode('trd_driver', serialport_name, baudrate)
     driver_node.run()
