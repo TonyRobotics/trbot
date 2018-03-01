@@ -4,6 +4,7 @@ import sys
 import time
 import math
 import struct
+from threading import Lock
 
 import serial
 import rospy
@@ -11,7 +12,9 @@ import tf
 from geometry_msgs.msg import Twist, Quaternion
 from nav_msgs.msg import Odometry
 
-class TRDSerialDriver():
+lock = Lock()
+
+class TrackedSerialDriver():
 
     def __init__(self, serialport_name, baudrate):
         self.conn = serial.Serial(serialport_name, baudrate)
@@ -20,44 +23,32 @@ class TRDSerialDriver():
         self.first_time_flag = True
 
     def send_cmd(self, cmd):
-        for i in range(len(cmd)-2):
-            cmd[-2] ^= cmd[i]
+        print(cmd)
         self.conn.write(cmd)
 
-    def reset_base(self):
-        print('Resetting Base...')
-        cmd = [0xea, 0x03, 0x50, 0x00, 0x0d]
-        self.send_cmd(cmd)
-        time.sleep(3)
-        print('Resetting Base Finished')
-
-    def reset_encoder(self):
-        cmd = [0xea, 0x03, 0x35, 0x00, 0x0d]
-        self.send_cmd(cmd)
-        print('Reset Encoder:', self.get_response(5))
-
-    def set_speed(self, v1, v2):
-        cmd = [0xea, 0x04, 0x31, v1, 0x00, 0x0d]
-        self.send_cmd(cmd)
-        cmd = [0xea, 0x04, 0x32, v2, 0x00, 0x0d]
-        self.send_cmd(cmd)
-
-    def get_response(self, n):
-        res = self.conn.read(n)
-        # using bytearray for Python 2.x
+    def get_response(self):
+        time.sleep(0.01)
+        res = ''
+        while self.conn.inWaiting() > 0:
+            res += self.conn.read(1)
         res = bytearray(res)
+        print(time.time(), res)
         return res
 
-    def get_mode(self):
-        cmd = [0xea, 0x03, 0x2b, 0x00, 0x0d]
+    def set_speed(self, v1, v2):
+        cmd = '!M {} {} \r'.format(v1, v2)
+        lock.acquire()
         self.send_cmd(cmd)
-        res = self.get_response(6)
-        return res[3]
+        res = self.get_response()
+        lock.release()
 
     def get_encoders(self):
-        cmd = [0xea, 0x03, 0x25, 0x00, 0x0d]
+        cmd = '?C \r'
+        lock.acquire()
         self.send_cmd(cmd)
-        res = self.get_response(13)
+        res = self.get_response()
+        lock.release()
+        return (0,0)
         encoder1, = struct.unpack('>i', res[3:7])
         encoder2, = struct.unpack('>i', res[7:11])
         if self.first_time_flag:
@@ -69,24 +60,18 @@ class TRDSerialDriver():
         print('{}: {} {}'.format(time.time(), encoder1, encoder2))
         return (encoder1, encoder2)
 
-    def get_version(self):
-        cmd = [0xea, 0x03, 0x51, 0x00, 0x0d]
-        self.send_cmd(cmd)
-        res = self.get_response(13)
-        return res[2:11]
-
 class DriverNode():
 
     def __init__(self, node_name, serialport_name, baudrate):
-        self.serial_driver = TRDSerialDriver(serialport_name, baudrate)
-        self.serial_driver.reset_encoder()
+        self.serial_driver = TrackedSerialDriver(serialport_name, baudrate)
         rospy.init_node(node_name)
         self.linear_coef = 82
         self.angular_coef = 14.64
-        self.left_coef = 1
-        self.right_coef = 1
-        self.encoder_ticks_per_rev = 1600
-        self.base_width = 0.39
+        self.left_coef = 5
+        self.right_coef = 5
+        self.encoder_ticks_per_rev = 15*2500
+        self.base_width = 0.53
+        self.wheel_diameter = 0.16
         self.pub_odom = rospy.Publisher('/odom', Odometry, queue_size=10)
         self.sub_vel = rospy.Subscriber('/cmd_vel', Twist, self.vel_callback)
         self.tf_broadcaster = tf.TransformBroadcaster()
@@ -99,30 +84,29 @@ class DriverNode():
         self.odom = Odometry()
         self.odom.header.frame_id = 'odom'
         self.odom.child_frame_id = 'base_link'
+        self.v1 = 0
+        self.v2 = 0
 
     def vel_callback(self, vel_msg):
-        v1 = self.linear_coef * vel_msg.linear.x
-        v2 = self.linear_coef * vel_msg.linear.x
-        v1 -= self.angular_coef * vel_msg.angular.z
-        v2 += self.angular_coef * vel_msg.angular.z
-        v1 *= self.left_coef
-        v2 *= self.right_coef
-        v1 += 128
-        v2 += 128
-        v1 = int(v1) if v1<255 else 255
-        v2 = int(v2) if v2<255 else 255
-        v1 = int(v1) if v1>0 else 0
-        v2 = int(v2) if v2>0 else 0
-        self.serial_driver.set_speed(v1, v2)
+        self.v1 = self.linear_coef * vel_msg.linear.x
+        self.v2 = self.linear_coef * vel_msg.linear.x
+        self.v1 -= self.angular_coef * vel_msg.angular.z
+        self.v2 += self.angular_coef * vel_msg.angular.z
+        self.v1 *= self.left_coef
+        self.v2 *= self.right_coef
+        self.v1 = int(self.v1) if self.v1<1000 else 1000
+        self.v2 = int(self.v2) if self.v2<1000 else 1000
+        self.v1 = int(self.v1) if self.v1>-1000 else -1000
+        self.v2 = int(self.v2) if self.v2>-1000 else -1000
 
     def update_odom(self):
         (encoder1, encoder2) = self.serial_driver.get_encoders()
         time_current = rospy.Time.now()
         time_elapsed = (time_current - self.time_prev).to_sec()
         self.time_prev = time_current
-        dleft = self.left_coef * math.pi * \
+        dleft = self.left_coef * math.pi * self.wheel_diameter * \
                 (encoder1 - self.encoder1_prev) / self.encoder_ticks_per_rev
-        dright = self.right_coef * math.pi * \
+        dright = self.right_coef * math.pi * self.wheel_diameter * \
                 (encoder2 - self.encoder2_prev) / self.encoder_ticks_per_rev
         d = (dleft + dright) / 2
         dtheta = (dright - dleft) / self.base_width
@@ -150,6 +134,7 @@ class DriverNode():
             try:
                 self.update_odom()
                 self.pub_odom.publish(self.odom)
+                self.serial_driver.set_speed(self.v1, self.v2)
                 self.tf_broadcaster.sendTransform((self.x,self.y,0),
                     tf.transformations.quaternion_from_euler(0, 0, self.theta),
                     rospy.Time.now(),
@@ -159,13 +144,13 @@ class DriverNode():
             except KeyboardInterrupt:
                 print('exit.')
                 break
-            except serial.serialutil.SerialException:
-                print('exit serial.')
-                break
+            #except serial.serialutil.SerialException:
+            #    print('exit serial.')
+            #    break
 
 if __name__=='__main__':
     serialport_name = '/dev/ttyUSB0'
-    baudrate = 38400
-    driver_node = DriverNode('trd_driver', serialport_name, baudrate)
+    baudrate = 115200
+    driver_node = DriverNode('tracked_driver', serialport_name, baudrate)
     driver_node.run()
 
