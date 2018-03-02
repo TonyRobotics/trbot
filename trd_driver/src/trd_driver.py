@@ -14,23 +14,45 @@ from nav_msgs.msg import Odometry
 class TRDSerialDriver():
 
     def __init__(self, serialport_name, baudrate):
-        self.conn = serial.Serial(serialport_name, baudrate)
+        self.serialport_name = serialport_name
+        self.baudrate = baudrate
+        self.conn = serial.Serial(self.serialport_name, self.baudrate)
         self.encoder1_offset = 0
         self.encoder2_offset = 0
         self.first_time_flag = True
 
+    def reconnect(self, side):
+        print(side, 'reconnecting...')
+        while True:
+            try:
+                self.conn = serial.Serial(self.serialport_name, self.baudrate)
+            except:
+                time.sleep(1)
+                print(side, 'reconnecting...')
+            else:
+                print(side, 'reconnected!')
+                break
+
     def send_cmd(self, cmd):
         for i in range(len(cmd)-2):
             cmd[-2] ^= cmd[i]
-        self.conn.write(cmd)
-        #print(cmd)
+        while True:
+            try:
+                self.conn.write(cmd)
+                break
+            except serial.serialutil.SerialException:
+                self.reconnect('write')
 
     def get_response(self, n):
-        res = self.conn.read(n)
-        # using bytearray for Python 2.x
-        res = bytearray(res)
-        #print(time.time(), res)
-        return res
+        try:
+            res = self.conn.read(n)
+        except serial.serialutil.SerialException:
+            self.reconnect('read')
+            return None
+        else:
+            # using bytearray for Python 2.x
+            res = bytearray(res)
+            return res
 
     def reset_base(self):
         print('Resetting Base...')
@@ -54,12 +76,14 @@ class TRDSerialDriver():
         cmd = [0xea, 0x03, 0x2b, 0x00, 0x0d]
         self.send_cmd(cmd)
         res = self.get_response(6)
-        return res[3]
+        return res
 
     def get_encoders(self):
         cmd = [0xea, 0x03, 0x25, 0x00, 0x0d]
         self.send_cmd(cmd)
         res = self.get_response(13)
+        if not res:
+            return (None, None)
         encoder1, = struct.unpack('>i', res[3:7])
         encoder2, = struct.unpack('>i', res[7:11])
         if self.first_time_flag:
@@ -124,6 +148,9 @@ class DriverNode():
 
     def update_odom(self):
         (encoder1, encoder2) = self.serial_driver.get_encoders()
+        if None==encoder1 or None==encoder2:
+            print('Encoder(None, None)')
+            return
         time_current = rospy.Time.now()
         time_elapsed = (time_current - self.time_prev).to_sec()
         self.time_prev = time_current
@@ -157,7 +184,8 @@ class DriverNode():
             try:
                 self.update_odom()
                 self.pub_odom.publish(self.odom)
-                self.tf_broadcaster.sendTransform((self.x,self.y,0),
+                self.tf_broadcaster.sendTransform(
+                    (self.x,self.y,0),
                     tf.transformations.quaternion_from_euler(0, 0, self.theta),
                     rospy.Time.now(),
                     'base_link',
@@ -165,9 +193,6 @@ class DriverNode():
                 rate.sleep()
             except KeyboardInterrupt:
                 print('exit.')
-                break
-            except serial.serialutil.SerialException:
-                print('exit serial.')
                 break
 
 if __name__=='__main__':
