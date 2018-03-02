@@ -23,6 +23,14 @@ class TRDSerialDriver():
         for i in range(len(cmd)-2):
             cmd[-2] ^= cmd[i]
         self.conn.write(cmd)
+        #print(cmd)
+
+    def get_response(self, n):
+        res = self.conn.read(n)
+        # using bytearray for Python 2.x
+        res = bytearray(res)
+        #print(time.time(), res)
+        return res
 
     def reset_base(self):
         print('Resetting Base...')
@@ -41,12 +49,6 @@ class TRDSerialDriver():
         self.send_cmd(cmd)
         cmd = [0xea, 0x04, 0x32, v2, 0x00, 0x0d]
         self.send_cmd(cmd)
-
-    def get_response(self, n):
-        res = self.conn.read(n)
-        # using bytearray for Python 2.x
-        res = bytearray(res)
-        return res
 
     def get_mode(self):
         cmd = [0xea, 0x03, 0x2b, 0x00, 0x0d]
@@ -77,16 +79,19 @@ class TRDSerialDriver():
 
 class DriverNode():
 
-    def __init__(self, node_name, serialport_name, baudrate):
-        self.serial_driver = TRDSerialDriver(serialport_name, baudrate)
-        self.serial_driver.reset_encoder()
+    def __init__(self, node_name):
         rospy.init_node(node_name)
-        self.linear_coef = 82
-        self.angular_coef = 14.64
-        self.left_coef = 1
-        self.right_coef = 1
-        self.encoder_ticks_per_rev = 1600
-        self.base_width = 0.39
+        self.serialport_name = rospy.get_param('~serialport_name', \
+                                               default='/dev/motor_trd')
+        self.baudrate = rospy.get_param('~baudrate', default=38400)
+        self.linear_coef = rospy.get_param('~linear_coef', default=82)
+        self.angular_coef = rospy.get_param('~angular_coef', default=14.64)
+        self.left_coef = rospy.get_param('~left_coef', default=1)
+        self.right_coef = rospy.get_param('~right_coef', default =1)
+        self.encoder_ticks_per_rev = rospy.get_param('~encoder_ticks_per_rev', \
+                                                     default=1600)
+        self.base_width = rospy.get_param('~base_width', default=0.39)
+        self.wheel_diameter = rospy.get_param('~wheel_diameter', default=0.125)
         self.pub_odom = rospy.Publisher('/odom', Odometry, queue_size=10)
         self.sub_vel = rospy.Subscriber('/cmd_vel', Twist, self.vel_callback)
         self.tf_broadcaster = tf.TransformBroadcaster()
@@ -99,6 +104,8 @@ class DriverNode():
         self.odom = Odometry()
         self.odom.header.frame_id = 'odom'
         self.odom.child_frame_id = 'base_link'
+        self.serial_driver = TRDSerialDriver(self.serialport_name, self.baudrate)
+        self.serial_driver.reset_encoder()
 
     def vel_callback(self, vel_msg):
         v1 = self.linear_coef * vel_msg.linear.x
@@ -120,9 +127,9 @@ class DriverNode():
         time_current = rospy.Time.now()
         time_elapsed = (time_current - self.time_prev).to_sec()
         self.time_prev = time_current
-        dleft = self.left_coef * math.pi * \
+        dleft = self.left_coef * math.pi * self.wheel_diameter * \
                 (encoder1 - self.encoder1_prev) / self.encoder_ticks_per_rev
-        dright = self.right_coef * math.pi * \
+        dright = self.right_coef * math.pi * self.wheel_diameter * \
                 (encoder2 - self.encoder2_prev) / self.encoder_ticks_per_rev
         d = (dleft + dright) / 2
         dtheta = (dright - dleft) / self.base_width
@@ -164,8 +171,6 @@ class DriverNode():
                 break
 
 if __name__=='__main__':
-    serialport_name = '/dev/ttyUSB0'
-    baudrate = 38400
-    driver_node = DriverNode('trd_driver', serialport_name, baudrate)
+    driver_node = DriverNode('trd_driver')
     driver_node.run()
 
