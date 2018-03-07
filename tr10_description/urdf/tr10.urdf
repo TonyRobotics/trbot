@@ -5,8 +5,8 @@
       <legacyMode>false</legacyMode>
       <alwaysOn>true</alwaysOn>
       <updateRate>10</updateRate>
-      <leftJoint>joint_base_wheel1</leftJoint>
-      <rightJoint>joint_base_wheel2</rightJoint>
+      <leftJoint>joint_base_wheel_left</leftJoint>
+      <rightJoint>joint_base_wheel_right</rightJoint>
       <wheelSeparation>0.2</wheelSeparation>
       <wheelDiameter>0.05</wheelDiameter>
       <torque>20</torque>
@@ -91,7 +91,7 @@
     </inertial>
   </link>  
 
-  <link name="wheel_1">  
+  <link name="wheel_left">  
     <visual>  
       <geometry>  
         <cylinder length="0.05" radius="0.05"/>  
@@ -113,7 +113,7 @@
     </inertial>
   </link>  
   
-  <link name="wheel_2">  
+  <link name="wheel_right">  
     <visual>  
       <geometry>  
         <cylinder length="0.05" radius="0.05"/>  
@@ -133,7 +133,7 @@
     </inertial>
   </link>  
   
-  <link name="wheel_3">  
+  <link name="wheel_back">  
     <visual>  
       <geometry>  
         <sphere radius="0.05"/>  
@@ -160,23 +160,23 @@
     <origin xyz="0 0 0.125"/>  
   </joint>  
 
-  <joint name="joint_base_wheel1" type="continuous">  
+  <joint name="joint_base_wheel_left" type="continuous">  
     <parent link="base_link"/>  
-    <child link="wheel_1"/>  
+    <child link="wheel_left"/>  
     <axis xyz="0 1 0"/>
     <origin xyz="0.1 0.1 0"/>  
   </joint>  
   
-  <joint name="joint_base_wheel2" type="continuous">  
+  <joint name="joint_base_wheel_right" type="continuous">  
     <parent link="base_link"/>  
-    <child link="wheel_2"/>  
+    <child link="wheel_right"/>  
     <axis xyz="0 1 0"/>
     <origin xyz="0.1 -0.1 0"/>  
   </joint>  
   
-  <joint name="joint_base_wheel3" type="continuous">  
+  <joint name="joint_base_wheel_back" type="continuous">  
     <parent link="base_link"/>  
-    <child link="wheel_3"/>  
+    <child link="wheel_back"/>  
     <axis xyz="0 0 1"/>
     <origin xyz="-0.1 0 0"/>  
   </joint>  
