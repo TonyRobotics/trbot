@@ -136,14 +136,14 @@
   <link name="wheel_back">  
     <visual>  
       <geometry>  
-        <sphere radius="0.05"/>  
+        <sphere radius="0.05" />
       </geometry>  
       <origin rpy="1.5707963265 0 0"/>  
       <material name="black"/>  
     </visual>  
     <collision>
       <geometry>
-        <sphere radius="0.05"/>  
+        <sphere radius="0.05" />
       </geometry>
       <origin rpy="0 0 0"/>  
     </collision>

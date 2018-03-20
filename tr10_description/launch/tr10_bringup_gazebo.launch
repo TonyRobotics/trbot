@@ -9,7 +9,9 @@
              args="0 0 0.1 0 0 0 /base_link /laser_link 100" />
 
     <include file="$(find gazebo_ros)/launch/empty_world.launch">
+        <!--
         <arg name="world_name" value="$(find tr10_description)/world/maze01.world"/>
+        -->
     </include>
 
     <node pkg="gazebo_ros" type="spawn_model" args="-file $(find tr10_description)/urdf/tr10.urdf -urdf -model tr10" name="spawn_model_tr10" />
