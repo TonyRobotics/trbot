@@ -59,12 +59,17 @@ class TRDSerialDriver():
         cmd = [0xea, 0x03, 0x50, 0x00, 0x0d]
         self.send_cmd(cmd)
         time.sleep(3)
-        print('Resetting Base Finished')
+        print('Reset Base:', self.get_response(9))
 
     def reset_encoder(self):
         cmd = [0xea, 0x03, 0x35, 0x00, 0x0d]
         self.send_cmd(cmd)
         print('Reset Encoder:', self.get_response(5))
+
+    def enable_timeout(self):
+        cmd = [0xea, 0x02, 0x39, 0x00, 0x0d]
+        self.send_cmd(cmd)
+        print('Enable Timeout:', self.get_response(5))
 
     def set_speed(self, v1, v2):
         cmd = [0xea, 0x04, 0x31, v1, 0x00, 0x0d]
@@ -92,7 +97,7 @@ class TRDSerialDriver():
             self.first_time_flag = False
         encoder1 -= self.encoder1_offset
         encoder2 -= self.encoder2_offset
-        print('{}: {} {}'.format(time.time(), encoder1, encoder2))
+        #print('{}: {} {}'.format(time.time(), encoder1, encoder2))
         return (encoder1, encoder2)
 
     def get_version(self):
@@ -130,6 +135,8 @@ class DriverNode():
         self.odom.child_frame_id = 'base_link'
         self.serial_driver = TRDSerialDriver(self.serialport_name, self.baudrate)
         self.serial_driver.reset_encoder()
+        self.serial_driver.reset_base()
+        self.serial_driver.enable_timeout()
 
     def vel_callback(self, vel_msg):
         v1 = self.linear_coef * vel_msg.linear.x
