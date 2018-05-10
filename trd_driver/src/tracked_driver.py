@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 
 import sys
 import time
@@ -23,11 +23,12 @@ class TrackedSerialDriver():
         self.first_time_flag = True
 
     def send_cmd(self, cmd):
+        time.sleep(0.1)
         print(cmd)
         self.conn.write(cmd)
 
     def get_response(self):
-        time.sleep(0.01)
+        time.sleep(0.1)
         res = ''
         while self.conn.inWaiting() > 0:
             res += self.conn.read(1)
@@ -40,14 +41,16 @@ class TrackedSerialDriver():
         lock.acquire()
         self.send_cmd(cmd)
         res = self.get_response()
+        #print(time.time(), res)
         lock.release()
 
     def get_encoders(self):
-        cmd = '?C \r'
+        cmd = '?C\r'
         lock.acquire()
         self.send_cmd(cmd)
         res = self.get_response()
         lock.release()
+        #print(time.time(), res)
         return (0,0)
         encoder1, = struct.unpack('>i', res[3:7])
         encoder2, = struct.unpack('>i', res[7:11])
@@ -68,7 +71,7 @@ class DriverNode():
         self.linear_coef = 82
         self.angular_coef = 14.64
         self.left_coef = 5
-        self.right_coef = 5
+        self.right_coef = -5
         self.encoder_ticks_per_rev = 15*2500
         self.base_width = 0.53
         self.wheel_diameter = 0.16
@@ -108,6 +111,8 @@ class DriverNode():
                 (encoder1 - self.encoder1_prev) / self.encoder_ticks_per_rev
         dright = self.right_coef * math.pi * self.wheel_diameter * \
                 (encoder2 - self.encoder2_prev) / self.encoder_ticks_per_rev
+        self.encoder1_prev = encoder1
+        self.encoder2_prev = encoder2
         d = (dleft + dright) / 2
         dtheta = (dright - dleft) / self.base_width
         if d != 0:
@@ -132,15 +137,20 @@ class DriverNode():
         rate = rospy.Rate(10)
         while not rospy.is_shutdown():
             try:
+                print('=======')
                 self.update_odom()
+                time.sleep(0.1)
+                print('--------')
                 self.pub_odom.publish(self.odom)
                 self.serial_driver.set_speed(self.v1, self.v2)
-                self.tf_broadcaster.sendTransform((self.x,self.y,0),
-                    tf.transformations.quaternion_from_euler(0, 0, self.theta),
-                    rospy.Time.now(),
-                    'base_link',
-                    'odom')
-                rate.sleep()
+                print('--------')
+                time.sleep(0.1)
+                #self.tf_broadcaster.sendTransform((self.x,self.y,0),
+                #    tf.transformations.quaternion_from_euler(0, 0, self.theta),
+                #    rospy.Time.now(),
+                #    'base_link',
+                #    'odom')
+                #rate.sleep()
             except KeyboardInterrupt:
                 print('exit.')
                 break
