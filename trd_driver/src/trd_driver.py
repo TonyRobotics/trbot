@@ -1,117 +1,125 @@
 #!/usr/bin/python2
-
-import sys
-import time
-import math
-import struct
-
 import serial
+import threading
+import time
+import struct
+import math
+
 import rospy
 import tf
 from geometry_msgs.msg import Twist, Quaternion
 from nav_msgs.msg import Odometry
 
-class TRDSerialDriver():
+lock = threading.Lock()
+
+class TrdSerial(threading.Thread):
 
     def __init__(self, serialport_name, baudrate):
-        self.serialport_name = serialport_name
-        self.baudrate = baudrate
-        self.conn = serial.Serial(self.serialport_name, self.baudrate)
-        self.encoder1_offset = 0
-        self.encoder2_offset = 0
-        self.first_time_flag = True
+        threading.Thread.__init__(self)
+        self._serialport_name = serialport_name
+        self._baudrate = baudrate
+        self._conn = serial.Serial(self._serialport_name, self._baudrate, timeout=1)
+        self._stop = False
 
-    def reconnect(self, side):
-        print(side, 'reconnecting...')
-        while True:
-            try:
-                self.conn = serial.Serial(self.serialport_name, self.baudrate)
-            except:
-                time.sleep(1)
-                print(side, 'reconnecting...')
-            else:
-                print(side, 'reconnected!')
-                break
+        self._first_time_flag = True
+        self._encoders_offset = [0, 0]
+        self._encoders = [0, 0]
+        self._voltage = 0
+        self._currents = [0,0]
+        self._error_code = 0
 
-    def send_cmd(self, cmd):
-        for i in range(len(cmd)-2):
-            cmd[-2] ^= cmd[i]
-        while True:
-            try:
-                self.conn.write(cmd)
-                break
-            except serial.serialutil.SerialException:
-                self.reconnect('write')
-
-    def get_response(self, n):
-        try:
-            res = self.conn.read(n)
-        except serial.serialutil.SerialException:
-            self.reconnect('read')
-            return None
-        else:
-            # using bytearray for Python 2.x
-            res = bytearray(res)
-            return res
-
-    def reset_base(self):
-        print('Resetting Base...')
-        cmd = [0xea, 0x03, 0x50, 0x00, 0x0d]
-        self.send_cmd(cmd)
-        time.sleep(3)
-        print('Reset Base:', self.get_response(9))
-
-    def reset_encoder(self):
-        cmd = [0xea, 0x03, 0x35, 0x00, 0x0d]
-        self.send_cmd(cmd)
-        print('Reset Encoder:', self.get_response(5))
-
-    def enable_timeout(self):
-        cmd = [0xea, 0x02, 0x39, 0x00, 0x0d]
-        self.send_cmd(cmd)
-        print('Enable Timeout:', self.get_response(5))
-
-    def set_speed(self, v1, v2):
-        cmd = [0xea, 0x04, 0x31, v1, 0x00, 0x0d]
-        self.send_cmd(cmd)
-        cmd = [0xea, 0x04, 0x32, v2, 0x00, 0x0d]
-        self.send_cmd(cmd)
-
-    def get_mode(self):
-        cmd = [0xea, 0x03, 0x2b, 0x00, 0x0d]
-        self.send_cmd(cmd)
-        res = self.get_response(6)
-        return res
+    def run(self):
+        msg = []
+        msg_len = 0
+        in_msg_flag = False
+        while not self._stop:
+            r = self._conn.read(1)
+            if in_msg_flag:
+                if len(msg) > 30:
+                    in_msg_flag = False
+                    msg[:] = []
+                    print('Overflow message: {}, discarded!'.format(msg))
+                msg.append(r)
+                if len(msg)==2:
+                    msg_len = ord(r)
+                if len(msg) == msg_len+2:
+                    if r=='\r':
+                        in_msg_flag = False
+                        self.update(msg)
+                        msg[:] = []
+                    else:
+                        print('Invalid message: {}, discarded!'.format(msg))
+            elif r=='\xea':
+                msg.append(r)
+                in_msg_flag = True
 
     def get_encoders(self):
-        cmd = [0xea, 0x03, 0x25, 0x00, 0x0d]
-        self.send_cmd(cmd)
-        res = self.get_response(13)
-        if not res:
-            return (None, None)
-        encoder1, = struct.unpack('>i', res[3:7])
-        encoder2, = struct.unpack('>i', res[7:11])
-        if self.first_time_flag:
-            self.encoder1_offset = encoder1
-            self.encoder2_offset = encoder2
-            self.first_time_flag = False
-        encoder1 -= self.encoder1_offset
-        encoder2 -= self.encoder2_offset
-        #print('{}: {} {}'.format(time.time(), encoder1, encoder2))
-        return (encoder1, encoder2)
+        return (self._encoders[0], self._encoders[1])
 
-    def get_version(self):
-        cmd = [0xea, 0x03, 0x51, 0x00, 0x0d]
-        self.send_cmd(cmd)
-        res = self.get_response(13)
-        return res[2:11]
+    def set_speed(self, v1, v2):
+        cmd = [0xea, 0x05, 0x7e, v1, v2, 0x00, 0x0d]
+        self.send(cmd)
 
-class DriverNode():
+    def reset_encoder(self):
+        print('Reset encoder')
+        cmd = [0xea, 0x03, 0x35, 0x00, 0x0d]
+        self.send(cmd)
+
+    def reset_base(self):
+        print('Reset base')
+        cmd = [0xea, 0x03, 0x50, 0x00, 0x0d]
+        self.send(cmd)
+        time.sleep(3)
+
+    def enable_timeout(self):
+        print('Enable timeout')
+        cmd = [0xea, 0x02, 0x39, 0x00, 0x0d]
+        self.send(cmd)
+
+    def update(self, msg):
+        #print('{} received message: {}'.format(time.time(), msg))
+        if len(msg) < 4:
+            print('Msg length < 4 : {}', len(msg))
+        if ord(msg[2]) == 0x7e:
+            if len(msg) != 23:
+                print('Msg length = {} not correct, expected: 23', len(msg))
+            self._voltage = 0.2157*ord(msg[3])
+            self._currents = [0.0272*ord(msg[4]), 0.0272*ord(msg[5])]
+            self._error_code = ord(msg[6])
+            self._encoders[0], = struct.unpack('>i', bytearray(msg[11:15]))
+            self._encoders[1], = struct.unpack('>i', bytearray(msg[15:19]))
+            if self._first_time_flag:
+                self._encoders_offset[0] = self._encoders[0]
+                self._encoders_offset[1] = self._encoders[1]
+                self._first_time_flag = False
+            self._encoders[0] -= self._encoders_offset[0]
+            self._encoders[1] -= self._encoders_offset[1]
+            print('{} encoders: {}, voltage: {}V, currents: {}A, {}A'.format(
+                        time.time(), self._encoders, self._voltage, self._currents[0], self._currents[1]))
+        else:
+            print('{} received message: {}'.format(time.time(), msg))
+
+    def stop(self):
+        print('stop')
+        self._stop = True
+        self._conn.close()
+
+    def send(self, cmd):
+        for i in range(len(cmd)-2):
+            cmd[-2] ^= cmd[i]
+        print('send', cmd)
+        self._conn.write(cmd)
+
+    def read(self, n):
+        r = self._conn.read(n)
+        return r
+
+class RosWraperTrd():
 
     def __init__(self, node_name):
         rospy.init_node(node_name)
         self.serialport_name = rospy.get_param('~serialport_name', \
-                                               default='/dev/motor_trd')
+                                               default='/dev/ttyUSB0')
         self.baudrate = rospy.get_param('~baudrate', default=38400)
         self.linear_coef = rospy.get_param('~linear_coef', default=82)
         self.angular_coef = rospy.get_param('~angular_coef', default=14.64)
@@ -133,10 +141,18 @@ class DriverNode():
         self.odom = Odometry()
         self.odom.header.frame_id = 'odom'
         self.odom.child_frame_id = 'base_link'
-        self.serial_driver = TRDSerialDriver(self.serialport_name, self.baudrate)
-        self.serial_driver.reset_encoder()
-        self.serial_driver.reset_base()
-        self.serial_driver.enable_timeout()
+
+        self.trd_serial = TrdSerial(self.serialport_name, self.baudrate)
+        self.trd_serial.reset_encoder()
+        self.trd_serial.reset_base()
+        self.trd_serial.enable_timeout()
+
+        self.trd_serial.start()
+
+        self.vel1 = 0
+        self.vel2 = 0
+        self.vel_latest_time = 0
+        self.vel_timeout = 1
 
     def vel_callback(self, vel_msg):
         v1 = self.linear_coef * vel_msg.linear.x
@@ -151,13 +167,23 @@ class DriverNode():
         v2 = int(v2) if v2<255 else 255
         v1 = int(v1) if v1>0 else 0
         v2 = int(v2) if v2>0 else 0
-        self.serial_driver.set_speed(v1, v2)
+        lock.acquire()
+        self.vel1 = v1
+        self.vel2 = v2
+        lock.release()
+        self.vel_latest_time = time.time()
 
-    def update_odom(self):
-        (encoder1, encoder2) = self.serial_driver.get_encoders()
-        if None==encoder1 or None==encoder2:
-            print('Encoder(None, None)')
-            return
+    def update(self):
+        #set speed
+        if time.time()-self.vel_latest_time > self.vel_timeout:
+            #print('Vel timeout, set to (0,0)')
+            lock.acquire()
+            self.vel1 = 128
+            self.vel2 = 128
+            lock.release()
+        self.trd_serial.set_speed(self.vel1, self.vel2)
+        #get encoders
+        (encoder1, encoder2) = self.trd_serial.get_encoders()
         time_current = rospy.Time.now()
         time_elapsed = (time_current - self.time_prev).to_sec()
         self.time_prev = time_current
@@ -171,7 +197,7 @@ class DriverNode():
         dtheta = (dright - dleft) / self.base_width
         if d != 0:
             dx = math.cos(dtheta) * d
-            dy = -math.sin(dtheta) * d
+            dy = math.sin(dtheta) * d
             self.x += dx*math.cos(self.theta)-dy*math.sin(self.theta)
             self.y += dx*math.sin(self.theta)+dy*math.cos(self.theta)
         self.theta += dtheta
@@ -191,7 +217,7 @@ class DriverNode():
         rate = rospy.Rate(10)
         while not rospy.is_shutdown():
             try:
-                self.update_odom()
+                self.update()
                 self.pub_odom.publish(self.odom)
                 self.tf_broadcaster.sendTransform(
                     (self.x,self.y,0),
@@ -202,9 +228,10 @@ class DriverNode():
                 rate.sleep()
             except KeyboardInterrupt:
                 print('exit.')
+                self.trd_serial.stop()
                 break
 
-if __name__=='__main__':
-    driver_node = DriverNode('trd_driver')
-    driver_node.run()
+if __name__ == '__main__':
+    ros_wrapper_trd = RosWraperTrd('trd_driver')
+    ros_wrapper_trd.run()
 
