@@ -77,7 +77,7 @@ class TrdSerial(threading.Thread):
         self.send(cmd)
 
     def update(self, msg):
-        #print('{} received message: {}'.format(time.time(), msg))
+        #print('{} received message: {}'.format(time.time(), [hex(ord(m)) for m in msg]))
         if len(msg) < 4:
             print('Msg length < 4 : {}', len(msg))
         if ord(msg[2]) == 0x7e:
@@ -94,8 +94,9 @@ class TrdSerial(threading.Thread):
                 self._first_time_flag = False
             self._encoders[0] -= self._encoders_offset[0]
             self._encoders[1] -= self._encoders_offset[1]
-            print('{} encoders: {}, voltage: {}V, currents: {}A, {}A'.format(
-                        time.time(), self._encoders, self._voltage, self._currents[0], self._currents[1]))
+            print('{} encoders: {}, voltage: {}V, currents: {}A, {}A. send:{} {}, actual:{} {}'.format(
+                        time.time(), self._encoders, self._voltage, self._currents[0], self._currents[1],
+                        ord(msg[7]), ord(msg[8]), ord(msg[9]), ord(msg[10])))
         else:
             print('{} received message: {}'.format(time.time(), msg))
 
@@ -107,7 +108,7 @@ class TrdSerial(threading.Thread):
     def send(self, cmd):
         for i in range(len(cmd)-2):
             cmd[-2] ^= cmd[i]
-        print('send', cmd)
+        #print('send', cmd)
         self._conn.write(cmd)
 
     def read(self, n):
